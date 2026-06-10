@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { calculateSilenceScore } from './services/silenceIntelligence';
 import { saveAnalysis } from './config/db';
 import PersonalityAssessment from './pages/PersonalityAssessment';
@@ -15,6 +15,12 @@ function App() {
   const [entryCount, setEntryCount] = useState(0);
   const [activeTab, setActiveTab] = useState('silence');
 
+  // --- VOICE MODE STATES & REFS ---
+  const [isRecording, setIsRecording] = useState(false);
+  const [audioBlob, setAudioBlob] = useState(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+
   useEffect(() => {
     fetchSilenceScore();
   }, []);
@@ -26,25 +32,87 @@ function App() {
     setLoading(false);
   };
 
+  // --- RECORDING CONTROLS ---
+  const startRecording = async () => {
+    audioChunksRef.current = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorderRef.current.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+        setAudioBlob(audioBlob);
+      };
+
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error("Mic access denied or error:", err);
+      alert("Microphone access is required for Voice Mode.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      // Track lines ko explicitly close karna system memory ke liye safe rehta hai
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      setIsRecording(false);
+    }
+  };
+
+  // --- COMBINED HANDLE SAVE (TEXT + AUDIO BACKEND ROUTING) ---
   const handleSave = async () => {
-    if (!text.trim()) return;
+    // Agar dono khali hain toh return ho jao
+    if (!text.trim() && !audioBlob) return;
     
     setSaving(true);
     try {
-      const emotions = ["joy", "fear", "sadness", "anger", "anxiety", "hope"];
-      const randomEmotion = emotions[Math.floor(Math.random() * emotions.length)];
-      const randomConfidence = 0.7 + Math.random() * 0.25;
-      
-      await saveAnalysis("user_001", text, randomEmotion, randomConfidence);
+      if (audioBlob) {
+        // --- ROUTING TO YOUR FASTAPI AUDIO BACKEND ---
+        const formData = new FormData();
+        formData.append("file", audioBlob, `voice_entry_${Date.now()}.wav`);
+
+        const response = await fetch("http://127.0.0.1:8000/predict-audio", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!response.ok) throw new Error("Backend server error while processing audio");
+        
+        const data = await response.json();
+        
+        // Whisper ka mila hua text input box mein dikha do aur save pipeline run karo
+        if (data.transcribed_text) {
+          await saveAnalysis(
+            "user_001", 
+            data.transcribed_text, 
+            data.text_analysis.emotion, 
+            data.text_analysis.confidence
+          );
+          alert(`🎤 Voice Processed!\nText: "${data.transcribed_text}"\nResult: ${data.final_decision}`);
+        }
+      } else {
+        // --- OLD TEXT ONLY LOGIC (KEEPING YOUR ORIGINAL SCORING ENGINE SAFE) ---
+        const emotions = ["joy", "fear", "sadness", "anger", "anxiety", "hope"];
+        const randomEmotion = emotions[Math.floor(Math.random() * emotions.length)];
+        const randomConfidence = 0.7 + Math.random() * 0.25;
+        
+        await saveAnalysis("user_001", text, randomEmotion, randomConfidence);
+      }
+
+      // Cleanup & Refresh States
       setText('');
+      setAudioBlob(null);
       setEntryCount(prev => prev + 1);
       await fetchSilenceScore();
       
-      if (entryCount + 1 < 5) {
-        alert(`✅ Saved! ${4 - entryCount} more entries needed.`);
-      } else {
-        alert(`✅ Saved! Analysis updated.`);
-      }
     } catch (error) {
       console.error("Error:", error);
       alert("Error saving: " + error.message);
@@ -91,102 +159,40 @@ function App() {
         paddingBottom: 10,
         flexWrap: "wrap"
       }}>
-        <button 
-          onClick={() => setActiveTab('silence')}
-          style={{
-            padding: "10px 20px",
-            backgroundColor: activeTab === 'silence' ? "#2196F3" : "#f0f0f0",
-            color: activeTab === 'silence' ? "white" : "#333",
-            border: "none",
-            borderRadius: 8,
-            cursor: "pointer",
-            fontWeight: activeTab === 'silence' ? "bold" : "normal",
-            transition: "all 0.2s"
-          }}
-        >
-          🔇 Silence Intelligence (Phase 3)
-        </button>
-        <button 
-          onClick={() => setActiveTab('assessment')}
-          style={{
-            padding: "10px 20px",
-            backgroundColor: activeTab === 'assessment' ? "#2196F3" : "#f0f0f0",
-            color: activeTab === 'assessment' ? "white" : "#333",
-            border: "none",
-            borderRadius: 8,
-            cursor: "pointer",
-            fontWeight: activeTab === 'assessment' ? "bold" : "normal",
-            transition: "all 0.2s"
-          }}
-        >
-          🧠 Personality Assessment (Phase 4)
-        </button>
-        <button 
-          onClick={() => setActiveTab('dashboard')}
-          style={{
-            padding: "10px 20px",
-            backgroundColor: activeTab === 'dashboard' ? "#2196F3" : "#f0f0f0",
-            color: activeTab === 'dashboard' ? "white" : "#333",
-            border: "none",
-            borderRadius: 8,
-            cursor: "pointer",
-            fontWeight: activeTab === 'dashboard' ? "bold" : "normal",
-            transition: "all 0.2s"
-          }}
-        >
-          📊 Personality Dashboard (Phase 4)
-        </button>
-        <button 
-          onClick={() => setActiveTab('fusion')}
-          style={{
-            padding: "10px 20px",
-            backgroundColor: activeTab === 'fusion' ? "#2196F3" : "#f0f0f0",
-            color: activeTab === 'fusion' ? "white" : "#333",
-            border: "none",
-            borderRadius: 8,
-            cursor: "pointer",
-            fontWeight: activeTab === 'fusion' ? "bold" : "normal",
-            transition: "all 0.2s"
-          }}
-        >
-          🧠 Behavioral Fusion (Phase 5)
-        </button>
-        <button 
-          onClick={() => setActiveTab('prediction')}
-          style={{
-            padding: "10px 20px",
-            backgroundColor: activeTab === 'prediction' ? "#2196F3" : "#f0f0f0",
-            color: activeTab === 'prediction' ? "white" : "#333",
-            border: "none",
-            borderRadius: 8,
-            cursor: "pointer",
-            fontWeight: activeTab === 'prediction' ? "bold" : "normal",
-            transition: "all 0.2s"
-          }}
-        >
-          🔮 Predictions (Phase 6)
-        </button>
-        <button 
-          onClick={() => setActiveTab('dashboard7')}
-          style={{
-            padding: "10px 20px",
-            backgroundColor: activeTab === 'dashboard7' ? "#2196F3" : "#f0f0f0",
-            color: activeTab === 'dashboard7' ? "white" : "#333",
-            border: "none",
-            borderRadius: 8,
-            cursor: "pointer",
-            fontWeight: activeTab === 'dashboard7' ? "bold" : "normal",
-            transition: "all 0.2s"
-          }}
-        >
-          📊 Explainable Dashboard (Phase 7)
-        </button>
+        {['silence', 'assessment', 'dashboard', 'fusion', 'prediction', 'dashboard7'].map((tab) => {
+          const tabLabels = {
+            silence: "🔇 Silence Intelligence (Phase 3)",
+            assessment: "🧠 Personality Assessment (Phase 4)",
+            dashboard: "📊 Personality Dashboard (Phase 4)",
+            fusion: "🧠 Behavioral Fusion (Phase 5)",
+            prediction: "🔮 Predictions (Phase 6)",
+            dashboard7: "📊 Explainable Dashboard (Phase 7)"
+          };
+          return (
+            <button 
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              style={{
+                padding: "10px 20px",
+                backgroundColor: activeTab === tab ? "#2196F3" : "#f0f0f0",
+                color: activeTab === tab ? "white" : "#333",
+                border: "none",
+                borderRadius: 8,
+                cursor: "pointer",
+                fontWeight: activeTab === tab ? "bold" : "normal",
+                transition: "all 0.2s"
+              }}
+            >
+              {tabLabels[tab]}
+            </button>
+          );
+        })}
       </div>
       
       {/* Phase 3 - Silence Intelligence Tab */}
       {activeTab === 'silence' && (
         <>
-          {/* Input Section */}
+          {/* Input Section Upgraded with Voice Mode */}
           <div style={{ 
             border: "1px solid #ddd", 
             borderRadius: 12, 
@@ -194,11 +200,43 @@ function App() {
             marginBottom: 20,
             backgroundColor: "#fafafa"
           }}>
-            <h3 style={{ marginTop: 0 }}>✏️ Add Your Thought</h3>
+            <h3 style={{ marginTop: 0 }}>✏️ Add Your Thought / Record Voice</h3>
+            
+            <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "12px" }}>
+              <button
+                type="button"
+                onClick={isRecording ? stopRecording : startRecording}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 8,
+                  border: "none",
+                  cursor: "pointer",
+                  fontWeight: "bold",
+                  backgroundColor: isRecording ? "#f44336" : "#4CAF50",
+                  color: "white",
+                  animation: isRecording ? "pulse 1.5s infinite" : "none"
+                }}
+              >
+                {isRecording ? "🛑 Stop Mic" : "🎙️ Start Mic"}
+              </button>
+              
+              {audioBlob && !isRecording && (
+                <span style={{ color: "#4CAF50", fontSize: "14px", fontWeight: "bold" }}>
+                  ✅ Audio captured and ready to analyze!
+                </span>
+              )}
+              {isRecording && (
+                <span style={{ color: "#f44336", fontSize: "14px", fontWeight: "bold" }}>
+                  🔴 Recording... Speak now.
+                </span>
+              )}
+            </div>
+
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="How are you feeling today? Write here..."
+              disabled={isRecording || audioBlob !== null}
+              placeholder={audioBlob ? "Audio locked. Click 'Save Analysis' to upload." : "How are you feeling today? Write here or use the mic..."}
               rows={4}
               style={{ 
                 width: "100%", 
@@ -206,25 +244,46 @@ function App() {
                 fontSize: 14,
                 borderRadius: 8,
                 border: "1px solid #ccc",
-                fontFamily: "inherit"
+                fontFamily: "inherit",
+                backgroundColor: (isRecording || audioBlob) ? "#f0f0f0" : "#fff"
               }}
             />
-            <button
-              onClick={handleSave}
-              disabled={saving || !text.trim()}
-              style={{
-                marginTop: 12,
-                padding: "10px 24px",
-                fontSize: 16,
-                backgroundColor: saving ? "#ccc" : "#2196F3",
-                color: "white",
-                border: "none",
-                borderRadius: 8,
-                cursor: saving ? "not-allowed" : "pointer"
-              }}
-            >
-              {saving ? "💾 Saving..." : "💾 Save Analysis"}
-            </button>
+
+            <div style={{ display: "flex", gap: "10px", marginTop: 12 }}>
+              <button
+                onClick={handleSave}
+                disabled={saving || (!text.trim() && !audioBlob) || isRecording}
+                style={{
+                  padding: "10px 24px",
+                  fontSize: 16,
+                  backgroundColor: (saving || (!text.trim() && !audioBlob) || isRecording) ? "#ccc" : "#2196F3",
+                  color: "white",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: (saving || (!text.trim() && !audioBlob) || isRecording) ? "not-allowed" : "pointer"
+                }}
+              >
+                {saving ? "💾 Saving..." : "💾 Save Analysis"}
+              </button>
+
+              {audioBlob && (
+                <button
+                  onClick={() => { setAudioBlob(null); setText(''); }}
+                  style={{
+                    padding: "10px 16px",
+                    fontSize: 14,
+                    backgroundColor: "#f0f0f0",
+                    color: "#333",
+                    border: "1px solid #ccc",
+                    borderRadius: 8,
+                    cursor: "pointer"
+                  }}
+                >
+                  🔄 Clear Audio
+                </button>
+              )}
+            </div>
+
             {entryCount > 0 && entryCount < 5 && (
               <p style={{ marginTop: 12, color: "#ff9800" }}>
                 📊 {entryCount}/5 entries added. {5 - entryCount} more needed for baseline!
