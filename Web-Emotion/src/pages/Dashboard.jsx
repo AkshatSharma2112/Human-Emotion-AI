@@ -223,7 +223,7 @@ export default function Dashboard() {
                       gap: 15,
                     }}
                   >
-                    {[1, 2, 3, 4, 5].map((v) => (
+                    {['Strongly Agree','Agree', 'Neutral', 'Disagree', 'Strongly Disagree'].map((v) => (
                       <button
                         key={v}
                         onClick={() => handleAnswer(v)}
