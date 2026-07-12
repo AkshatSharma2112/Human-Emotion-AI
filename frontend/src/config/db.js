@@ -24,7 +24,10 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// Save emotion analysis
+// ✅ API Base URL for Backend
+export const API_BASE_URL = 'http://localhost:5001/api';
+
+// Save emotion analysis to Firebase
 export async function saveAnalysis(userId, text, emotion, confidence) {
   try {
     const docRef = await addDoc(collection(db, "emotion_analyses"), {
@@ -43,9 +46,8 @@ export async function saveAnalysis(userId, text, emotion, confidence) {
   }
 }
 
-// Get last 7 days analyses - SIMPLE VERSION (NO INDEX NEEDED)
+// Get last 7 days analyses
 export async function getLast7DaysAnalyses(userId) {
-  // Get all analyses for this user
   const q = query(
     collection(db, "emotion_analyses"),
     where("userId", "==", userId)
@@ -54,10 +56,8 @@ export async function getLast7DaysAnalyses(userId) {
   const snapshot = await getDocs(q);
   const analyses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   
-  // Sort by timestamp (newest first)
   const sorted = analyses.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   
-  // Filter last 7 days in JavaScript
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   
