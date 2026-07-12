@@ -1,3 +1,4 @@
+// src/components/BehavioralIntelligenceDashboard.jsx
 import { useState, useEffect } from 'react';
 import { calculateBehavioralIntelligence } from '../services/behavioralFusion';
 
